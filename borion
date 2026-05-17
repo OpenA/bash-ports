@@ -76,8 +76,8 @@ parse_opt() {
 	--dxvk    | -K) if [[ $val =~ ^[0-9]+$        ]]; then m_dxvk=$val; else m_dxvk='11'; fi ;;
 	--sync    | -S) if [[ $val =~ ^[,a-z]+$       ]]; then m_sync=$val; else m_sync='nt,fs,es'; fi ;;
 	--wow64   | -W) m_wine_run=("$WINEWOW_BIN") ;;
-	--upgrade | -U) m_upfx=1; fi ;;
-	--regup   | -R) m_ureg=1; fi ;;
+	--upgrade | -U) m_upfx=1 ;;
+	--regup   | -R) m_ureg=1 ;;
 	--hud     | -H) m_ghud=1 ;;
 	--quet    | -Q) m_wlvl=0 ;;
 	--log     | -L) m_wlvl=2
