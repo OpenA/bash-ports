@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 m_data_dir="$HOME/.local/share/borion"
-m_glob_var="$m_data_dir/g_variables"
+m_glob_var="$m_data_dir/glob_vars.sh"
 m_user_app="$m_data_dir/user-appdata"
 m_user_pfx="$m_data_dir/wine-prefix"
 
@@ -20,6 +20,7 @@ if [ ! -v PROTON_BASE_DIR ]; then
 	PROTON_LIBS_DIR="$PROTON_BASE_DIR/files/lib"
 	MSCORE_FONTS_DIR="$PROTON_BASE_DIR/files/share/fonts"
 	PROTON_VERSION="$(cut -d ' ' -f2 "$PROTON_BASE_DIR/version")"
+	EXTRA_LD_PATH="$PROTON_LIBS_DIR/x86_64-linux-gnu:$PROTON_BASE_DIR/protonfixes/files/lib/x86_64-linux-gnu"
 
 	echo "# These are the Proton files search paths (change it if needed)
 WINE64_BIN='$WINE64_BIN'
@@ -28,14 +29,17 @@ PROTON_VERSION='$PROTON_VERSION'
 PROTON_BASE_DIR='$PROTON_BASE_DIR'
 PROTON_LIBS_DIR='$PROTON_LIBS_DIR'
 MSCORE_FONTS_DIR='$MSCORE_FONTS_DIR'
-# you can add here 'export' variables for wine and libs" >> "$m_glob_var"
+EXTRA_LD_PATH='$EXTRA_LD_PATH'
+#PROTON_SAREK_PROFILE='default'
+# you can add here 'export' variables for wine and libs
+" > "$m_glob_var"
 fi
 
 m_dlls=''; m_wine_run=("$WINE64_BIN")
-m_args=(); m_wd3d_dll=(dxgi d3d8 d3d9 d3d10core d3d11 d3d12)
+m_args=(); m_wd3d_dll=(d3d8 d3d9 d3d10core dxgi d3d11 d3d12 d3d12core)
 
-m_dxvk=0; m_ghud=0; m_vscr=
-m_nvk1=b; m_wlvl=1;
+m_wlvl=1; m_dxvk=0; m_ureg=0; m_vscr=
+m_nvk1=b; m_ghud=0; m_upfx=0; m_sync=
 
 parse_opt() {
 	local arg="${1%=*}" # --{argument}=*
@@ -48,15 +52,18 @@ parse_opt() {
 		echo "  -h, --help       show this help"
 		echo "  -v, --version    show proton version"
 		echo "  -D, --desktop[=] open virtual desktop (def: 1920x1080)"
-		echo "  -K, --dxvk[=]    enable dxvk (def: 9-12)"
+		echo "  -S, --sync[=]    enable proton sync modes (def: nt,es,fs)"
+		echo "  -K, --dxvk[=]    enable dxvk (def: 11)"
+		echo "  -U, --upgrade    upgrade wine prefix"
+		echo "  -R, --regup      update user register keys"
 		echo "  -H, --hud        enable Hud"
 		echo "  -Q, --quet       no info in console"
-		echo "  -L, --log[=]     full log in console"
+		echo "  -L, --log[=]     full log in console (val: debug+opts)"
 		echo "  -W, --wow64      use wine-wow64 for legacy 32bit apps"
 		echo ""
 		echo "  -B, -be          enable BepInEx Unity runtime"
 		echo "  -G, -gl          force using opengl"
-		echo "  -V, -vk          force native vulkan lib"
+		echo "  -V, -vk          force native vulkan"
 		echo "  -J, -jp          force japanese locale"
 		echo "  -E, -en          force english locale"
 		exit
@@ -65,16 +72,22 @@ parse_opt() {
 		echo "${PROTON_VERSION% *} (Borion~0.1)"
 		exit
 		;;
-	--desktop | -D) m_vscr=$(if [[ $val =~ ^[0-9]+x[0-9]+$           ]]; then echo $val; else echo '1920x1080'; fi) ;;
-	--dxvk    | -K) m_dxvk=$(if [[ $val =~ ^[0-9]+-[0-9]+$|^[,0-9]+$ ]]; then echo $val; else echo '1'; fi) ;;
+	--desktop | -D) if [[ $val =~ ^[0-9]+x[0-9]+$ ]]; then m_vscr=$val; else m_vscr='1920x1080'; fi ;;
+	--dxvk    | -K) if [[ $val =~ ^[0-9]+$        ]]; then m_dxvk=$val; else m_dxvk='11'; fi ;;
+	--sync    | -S) if [[ $val =~ ^[,a-z]+$       ]]; then m_sync=$val; else m_sync='nt,fs,es'; fi ;;
 	--wow64   | -W) m_wine_run=("$WINEWOW_BIN") ;;
+	--upgrade | -U) m_upfx=1; fi ;;
+	--regup   | -R) m_ureg=1; fi ;;
 	--hud     | -H) m_ghud=1 ;;
 	--quet    | -Q) m_wlvl=0 ;;
 	--log     | -L) m_wlvl=2
+		if [ -z $val ]; then
+			val='+timestamp,+pid,+tid,+seh,+unwind,+threadname,+debugstr,+loaddll,+mscoree'
+		fi
 		export WINEDEBUG="$val"
 		;;
 	-be | -B) m_dlls+='winhttp.dll=n,b;' ;;
-	-vk | -V) m_nvk1=n ;;
+	-vk | -V) m_nvk1=n,b ;;
 	-gl | -G) m_nvk1=d ;;
 	-en | -E)
 		export LANG='en_US.UTF-8'
@@ -190,66 +203,21 @@ function copy_proton_dlls {
 	local w_arch="$2-windows";
 	# ~~
 	mkdir $vk_dir $gl_dir
+	for n in "${m_wd3d_dll[@]}"; do
+		mv "$1/$n.dll" "$gl_dir/$n.dll"
+	done
 	lcp_extra_libs c+dll "$PROTON_LIBS_DIR/wine/vkd3d-proton/$w_arch" $vk_dir
 	lcp_extra_libs c+dll "$PROTON_LIBS_DIR/wine/dxvk/$w_arch" $vk_dir
 	lcp_extra_libs c+dll "$PROTON_LIBS_DIR/wine/icu/$w_arch" "$1"
 	lcp_extra_libs c+dll "$PROTON_LIBS_DIR/vkd3d/$w_arch" "$1"
-	for n in "${m_wd3d_dll[@]}"; do
-		mv "$1/$n.dll" "$gl_dir/$n.dll"
+	for n in "$vk_dir"/*; do
+		ln -s "$n"
 	done
 }
-function link_d3d_dlls {
-	local sys=$1;
-	# ~~~
-	cd "$m_user_pfx/drive_c/windows/$sys"
-	case $m_dxvk in
-	 0) for n in "${m_wd3d_dll[@]}"    ; do ln -s -f "d3dgl/$n.dll"; done ;;
-	 1) for n in "${m_wd3d_dll[@]:0:2}"; do ln -s -f "d3dgl/$n.dll"; done 
-	    for n in "${m_wd3d_dll[@]:2}"  ; do ln -s -f "vkd3d/$n.dll"; done ;;
-	 2) for n in "${m_wd3d_dll[@]}"    ; do ln -s -f "vkd3d/$n.dll"; done ;;
-	esac
-}
 
-# create native dll override
-function reg_builtin_dlls {
-	local dbl_reg="$m_data_dir/builtin_dlls.reg"
-	
-	if [ ! -f "$dbl_reg" ]; then
-		echo 'Windows Registry Editor Version 5.00
-
-[HKEY_CURRENT_USER\Software\Wine\DllOverrides]
-"beclient.dll"="builtin,native"
-"beclient_x64.dll"="builtin,native"
-"dotnetfx35.exe"="builtin"
-"dotnetfx35setup.exe"="builtin"
-
-[HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\Enterbrain\RGSS3\RTP]
-"RPGVXAce"="C:\\Program Files\\RPGVXAce"
-
-[HKEY_LOCAL_MACHINE\SOFTWARE\Enterbrain\RGSS3\RTP]
-"RPGVXAce"="C:\\Program Files\\RPGVXAce"
-' > "$b"
-	fi
-	env "$m_wine_run" regedit "$b"
-}
-
-borion_init() {
-	env "$m_wine_run" wineboot && reg_builtin_dlls
+function create_wine_pfx {
+	env "$m_wine_run" wineboot $@
 	(
-		# create Proton AppData symlinks
-		cd "$m_user_pfx/drive_c/users/steamuser"
-		if [ -d "$m_user_app" ]; then
-			rm -rf AppData 'Saved Games'
-		else
-			mv AppData "$m_user_app" && mkdir "$m_user_app/Saves"
-		fi
-		ln -s "$m_user_app" AppData && mkdir 'Local Settings'
-		ln -s "$m_user_app/Saves" 'Saved Games'
-		ln -s '../AppData/Local' 'Local Settings/Application Data'
-		ln -s '../Saved Games' 'Documents/My Games'
-		ln -s './AppData/Roaming' 'Application Data'
-		ln -s './Documents' 'My Documents'
-		# ~~~
 		cd "$m_user_pfx/drive_c/windows"
 		# import mscore fonts
 		if [ -d "$MSCORE_FONTS_DIR" ]; then
@@ -266,6 +234,43 @@ borion_init() {
 			copy_proton_dlls system32 x86_64 #!!! copy lib64 in to sys32 !!!
 		fi
 	)
+}
+
+# create native dll override
+function update_extra_reg {
+	if [ ! -f "$dbl_reg" ]; then
+		echo 'Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Wine\DllOverrides]
+"beclient.dll"="builtin,native"
+"beclient_x64.dll"="builtin,native"
+"dotnetfx35.exe"="builtin"
+"dotnetfx35setup.exe"="builtin"
+"winebth.sys"="disabled"
+"steam.exe"="builtin"
+
+' > "$usr_reg"
+	fi
+	env "$m_wine_run" regedit "$usr_reg"
+}
+
+borion_init() {
+	create_wine_pfx && update_extra_reg
+	(
+		# create Proton AppData symlinks
+		cd "$m_user_pfx/drive_c/users/steamuser"
+		if [ -d "$m_user_app" ]; then
+			rm -rf AppData 'Saved Games'
+		else
+			mv AppData "$m_user_app" && mkdir "$m_user_app/Saves"
+		fi
+		ln -s "$m_user_app" AppData && mkdir 'Local Settings'
+		ln -s "$m_user_app/Saves" 'Saved Games'
+		ln -s '../AppData/Local' 'Local Settings/Application Data'
+		ln -s '../Saved Games' 'Documents/My Games'
+		ln -s './AppData/Roaming' 'Application Data'
+		ln -s './Documents' 'My Documents'
+	)
 	if [ ! -v NVIDIA_WINE_DLL_DIR ]; then
 		export NVIDIA_WINE_DLL_DIR="$(find_ld_dir 'libGLX.so.0')/nvidia/wine"
 		echo "export NVIDIA_WINE_DLL_DIR='$NVIDIA_WINE_DLL_DIR'" >> "$m_glob_var"
@@ -279,40 +284,36 @@ borion_start() {
 	# TODO: D3D11 has a different loading mechanism because why not
 	export INTC_ALT_DRIVER_EXTENSIONS_PATH='C:\Windows\System32'
 
-	if [ -d "$m_user_pfx/drive_c/windows/system32/vkd3d" ]; then
-		(  link_d3d_dlls syswow64
-		   link_d3d_dlls system32  )
+	if [ $m_dxvk -ne 0 ]; then
+		local l=3; # dx10
 		case $m_dxvk in
-		  1) for d3d in "${m_wd3d_dll[@]:2}"; do m_dlls+="$d3d=n;"; done ;;
-		  2) for d3d in "${m_wd3d_dll[@]}"  ; do m_dlls+="$d3d=n;"; done ;;
+		  11) l=5 ;;
+		  12) l=7 ;;
 		esac
+		for d3d in "${m_wd3d_dll[@]:0:l}";
+			do m_dlls+="$d3d=n;";
+		done
 	fi
 	if [ -v PROTON_SAREK_PROFILE ]; then
 		sarek_ogl_vk_tweaks $PROTON_SAREK_PROFILE
 	fi
 	if [ $m_ghud -eq 1 ]; then
 		if [ $m_dxvk -ne 0 ];
-			then export DXVK_HUD='full'
+			then export DXVK_HUD='api,version,fps,memory,frametimes'
 			else export GALLIUM_HUD='VRAM-usage,GPU-load,fps';
 		fi
 	fi
-	m_dlls+="vulkan-1=$m_nvk1"
+	export WINEDLLOVERRIDES="${m_dlls}vulkan-1=${m_nvk1}"
 
-	local l_dxvk=(none info debug);
-	local l_vkd3=(none err warn fixme trace);
+	if [[ $m_sync = *nt* ]]; then export WINENTSYNC=1; fi
+	if [[ $m_sync = *es* ]]; then export WINEESYNC=1;  fi
+	if [[ $m_sync = *fs* ]]; then export WINEFSYNC=1;  fi
 
-#	export DXVK_ENABLE_NVAPI=1
-	export DXVK_LOG_LEVEL="${l_dxvk[$m_wlvl]}"
-	export DXVK_NVAPI_LOG_LEVEL="${l_dxvk[$m_wlvl]}"
-	export VKD3D_DEBUG="${l_vkd3[$m_wlvl]}"
-	export VKD3D_SHADER_DEBUG="${l_vkd3[$m_wlvl]}"
-
-#	export GST_GL_WINDOW='x11'
-	export GST_PLUGIN_SYSTEM_PATH_1_0="$PROTON_LIBS_DIR/x86_64-linux-gnu/gstreamer-1.0:$PROTON_LIBS_DIR/i386-linux-gnu/gstreamer-1.0"
+	export GST_GL_WINDOW="$XDG_SESSION_TYPE"
 	export WINE_GST_REGISTRY_DIR="$m_data_dir/gstreamer-1.0"
 
 	# >>> start
-	env WINEDLLOVERRIDES="$m_dlls" "${m_wine_run[@]}" "${m_args[@]}"
+	env LD_LIBRARY_PATH="$EXTRA_LD_PATH" "${m_wine_run[@]}" "${m_args[@]}"
 }
 
 # parse sys args
@@ -334,11 +335,22 @@ if [ ! -f "$m_wine_run" ]; then
 	exit
 fi
 
-  if [ $m_wlvl -eq 0 ]; then export WINEDEBUG='-all';
-elif [ $m_wlvl -eq 1 ]; then export WINEDEBUG='fixme-all';
+  if [ $m_wlvl -eq 0 ]; then
+	export WINEDEBUG='-all'
+	export DXVK_LOG_LEVEL='none'
+	export DXVK_NVAPI_LOG_LEVEL='none'
+	export VKD3D_DEBUG='none'
+	export VKD3D_SHADER_DEBUG='none'
+elif [ $m_wlvl -eq 1 ]; then
+	export WINEDEBUG='fixme-all'
+	export VKD3D_DEBUG='fixme'
+	export VKD3D_SHADER_DEBUG='fixme'
 elif [ $m_wlvl -eq 2 ]; then
-	export WINEDEBUG='+timestamp,+pid,+tid,+seh,+unwind,+threadname,+debugstr,+loaddll,+mscoree'
-	export WINE_MONO_TRACE='E:System.NotImplementedException';
+	export WINE_MONO_TRACE='E:System.NotImplementedException'
+	export DXVK_LOG_LEVEL='debug'
+	export DXVK_NVAPI_LOG_LEVEL='debug'
+	export VKD3D_DEBUG='trace'
+	export VKD3D_SHADER_DEBUG='trace'
 fi
 
 if [ ! -z "$m_user_pfx" ]; then
@@ -350,6 +362,9 @@ if [ ! -z "$m_user_pfx" ]; then
 		fi
 		borion_init
 	fi
+else
+	if [ $m_upfx -eq 1 ]; then update_extra_reg; fi
+	if [ $m_ureg -eq 1 ]; then create_wine_pfx -u; fi
 fi
 
 if [ ! -z "$m_vscr" ]; then
@@ -357,7 +372,7 @@ if [ ! -z "$m_vscr" ]; then
 elif [ -d "$m_args" ]; then
 	m_wine_run+=('explorer')
 elif [[ -f "$m_args" && "$m_args" = *.exe ]]; then 
-	 m_wine_run+=('start' '/unix')
+	m_wine_run+=('start' '/unix')
 fi
 
 if [ $m_wlvl -ne 0 ]; then
