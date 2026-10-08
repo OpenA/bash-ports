@@ -36,7 +36,7 @@ EXTRA_LD_PATH="$PROTON_LIBS_DIR/x86_64-linux-gnu:$PROTON_BASE_DIR/protonfixes/fi
 fi
 
 m_dlls=''; m_wine_run=("$WINE64_BIN")
-m_args=(); m_wd3d_dll=(d3d8 d3d9 d3d10core dxgi d3d11 d3d12 d3d12core)
+m_args=(); m_wd3d_dll=(d3d8 d3d9 d3d10core dxgi d3d11 d3d12)
 
 m_wlvl=1; m_dxvk=0; m_ureg=0; m_vscr=
 m_nvk1=b; m_ghud=0; m_upfx=0; m_sync=
@@ -55,7 +55,7 @@ parse_opt() {
 		echo "  -S, --sync[=]    enable proton sync modes (def: nt,es,fs)"
 		echo "  -K, --dxvk[=]    enable dxvk (def: 11)"
 		echo "  -U, --upgrade    upgrade wine prefix"
-		echo "  -R, --regup      update user register keys"
+		echo "  -R, --regupd     update user register keys"
 		echo "  -H, --hud        enable Hud"
 		echo "  -Q, --quet       no info in console"
 		echo "  -L, --log[=]     full log in console (val: debug+opts)"
@@ -77,7 +77,7 @@ parse_opt() {
 	--sync    | -S) if [[ $val =~ ^[,a-z]+$       ]]; then m_sync=$val; else m_sync='nt,fs,es'; fi ;;
 	--wow64   | -W) m_wine_run=("$WINEWOW_BIN") ;;
 	--upgrade | -U) m_upfx=1 ;;
-	--regup   | -R) m_ureg=1 ;;
+	--regupd  | -R) m_ureg=1 ;;
 	--hud     | -H) m_ghud=1 ;;
 	--quet    | -Q) m_wlvl=0 ;;
 	--log     | -L) m_wlvl=2
@@ -364,10 +364,10 @@ if [ ! -z "$m_user_pfx" ]; then
 			echo -e "\033[30;43mCreate new prefix\033[0m\n  $m_user_pfx";
 		fi
 		borion_init
+	else
+		if [ $m_ureg -eq 1 ]; then update_extra_reg; fi
+		if [ $m_upfx -eq 1 ]; then create_wine_pfx -u; fi
 	fi
-else
-	if [ $m_upfx -eq 1 ]; then update_extra_reg; fi
-	if [ $m_ureg -eq 1 ]; then create_wine_pfx -u; fi
 fi
 
 if [ ! -z "$m_vscr" ]; then
