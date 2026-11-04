@@ -1,0 +1,155 @@
+#!/bin/bash
+set -euo pipefail
+
+SELF_NAME="$(basename "$0")"
+SELF_PATH="$0"
+SELF_VER="1.0"
+
+get_driver_name() {
+	local driver_dir='/sys/class/drm/card0/device/driver'
+	if [ -e "$driver_dir" ]; then
+		echo "$(basename "$(readlink -f "$driver_dir")")"
+	else
+		echo "none"
+	fi
+}
+
+# PStates Parser: receives file content as an argument
+# Output: "<mhz> <id>"
+parse_pstates() {
+	local line id core_mhz
+
+	while IFS= read -r line; do
+		# The part of the string before the first colon is a candidate for the pstate ID.
+		id="${line%%:*}"
+		# Skip lines that do not contain a colon
+		[[ "$id" == "$line" ]] && continue
+		id="${id// /}"
+		# Skip service lines: the ID must be a 1-2 digit hex value
+		[[ ! "$id" =~ ^[0-9a-f]{1,2}$ ]] && continue
+		# Core frequency; if the line is missing - 0
+		core_mhz=0
+		if [[ "$line" =~ core[[:space:]]+([0-9]+)[[:space:]]+MHz ]]; then
+		    core_mhz="${BASH_REMATCH[1]}"
+		fi
+		echo "${core_mhz} ${id}"
+	done <<< "$1"
+}
+
+install_service() {
+	local y service_name="gpu-pstate-init.service"
+	if [ -f "/etc/systemd/system/$service_name" ]; then
+		echo 'Service allready installed' >&2
+		exit 0
+	fi
+	echo 'Before start, check you script location is not temporary:'
+	echo ';-------------------------------------------------------'
+	echo "; $SELF_PATH"
+	echo ';-------------------------------------------------------'
+	read -p "will service use this script path? (y/n) " y
+
+	[[ "$y" != 'Y' && "$y" != 'y' ]] && exit 0
+
+	echo "
+[Unit]
+Description=Set nouveau pstate to lowest at graphical session start
+After=graphical.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$SELF_PATH idle
+
+[Install]
+WantedBy=graphical.target
+" | sudo tee "/etc/systemd/system/$service_name"
+	sudo systemctl daemon-reload
+	sudo systemctl enable "$service_name" || {
+		echo "Could not enable systemd service" >&2
+		exit 0
+	}
+}
+
+main() {
+	local driver="$(get_driver_name)"
+	local sorted=()
+	# Block: We only work with Nouveau
+	if [ "$driver" != "nouveau" ]; then
+		echo "Driver on card0 is '${driver:-unknown}', not nouveau ~ skipping" >&2
+		exit 0
+	fi
+	local ps_file="/sys/kernel/debug/dri/0/pstate"
+	local pstates="$(sudo cat "$ps_file" 2>/dev/null || true)"
+	# ~~
+	if [ -z "$pstates" ]; then
+		echo "Could not read $ps_file ~ skipping (debugfs not mounted or pstate disabled)" >&2
+		exit 0
+	fi
+	mapfile -t sorted < <(parse_pstates "$pstates" | sort -n)
+
+	local nm="${#sorted[@]}"
+	if [ $nm -lt 1 ]; then
+		echo 'Could not parse any pstates ~ skipping' >&2
+		exit 0
+	fi
+	local lo_mhz lo_id; [[ $nm -gt 0 ]] && read -r lo_mhz lo_id <<< "${sorted[0]}"
+	local hi_mhz hi_id; [[ $nm -gt 1 ]] && read -r hi_mhz hi_id <<< "${sorted[1]}"
+	local ex_mhz ex_id; [[ $nm -gt 2 ]] && read -r ex_mhz ex_id <<< "${sorted[2]}"
+
+	case "$1" in
+	idle) [[ $nm -gt 0 ]] && echo "pstate set to $(echo "$lo_id" | sudo tee "$ps_file") (idle, ${lo_mhz} MHz core)" ;;
+	perf) [[ $nm -gt 1 ]] && echo "pstate set to $(echo "$hi_id" | sudo tee "$ps_file") (perf, ${hi_mhz} MHz core)" ;;
+	hard) [[ $nm -gt 2 ]] && echo "pstate set to $(echo "$ex_id" | sudo tee "$ps_file") (hard, ${ex_mhz} MHz core)" ;;
+	list)
+		[[ $nm -gt 0 ]] && echo " | idle | - core ${lo_mhz}Mhz"
+		[[ $nm -gt 1 ]] && echo " | perf | - core ${hi_mhz}Mhz"
+		[[ $nm -gt 2 ]] && echo " | hard | - core ${ex_mhz}Mhz"
+		;;
+	play)
+		[[ $nm -gt 1 ]] && trap "echo '$lo_id' | sudo tee '$ps_file' > /dev/null" EXIT INT TERM
+		[[ $nm -gt 1 ]] &&       echo "$hi_id" | sudo tee "$ps_file" > /dev/null
+		;;
+	esac
+}
+
+# ---
+case "${1:-}" in
+--help | -h)
+	echo "Usage: $SELF_NAME [mode]"
+	echo ""
+	echo "Modes:"
+	echo "  list  (show all profiles)"
+	echo "  idle  (low freq profile)"
+	echo "  perf  (avg freq profile)"
+	echo "  hard  (max freq profile) - may lead to an instant freeze; use you own risk"
+	echo "  play  (dyn freq profile) - perf mode for a target program, with a switch back to idle if it stops"
+	echo ""
+	echo "Options:"
+	echo "  -v --version       (prints script version)"
+	echo "  -h --help          (prints this help)"
+	echo "  --install-service  (systemd unit for auto switch in to idle mode at graphic session start)"
+	echo ""
+	;;
+--version | -v)
+	echo "$SELF_VER"
+	;;
+--install-service)
+	install_service
+	;;
+list | idle | perf | hard)
+	main "$1"
+	;;
+play)
+	if [ "$#" -lt 2 ]; then
+		echo "Usage: $SELF_NAME play <program> [args...]" >&2
+		exit 1
+	else
+		main "$1" && "${@:2}"
+	fi
+	;;
+*)
+	echo "Usage: $SELF_NAME [perf|idle]" >&2
+	echo "See --help for more info" >&2
+	exit 1
+	;;
+esac
