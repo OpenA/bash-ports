@@ -103,27 +103,27 @@ function find_ld_dir {
 # On success, returns a absolute-path to the directory at which DLL files are stored
 #
 # On failure, returns an empty string
-	local get_ld_p="$m_data_dir/get-ld-path"
+	local name sep path lib="$1"
 
-	if [ ! -f "$get_ld_p" ]; then
-		cc -o "$get_ld_p" -x c -ldl - <<< '
+	# 1) ldconfig cache; read lines like "  libz.so.1 (libc6,x86-64) => /usr/lib/.../libz.so.1"
+	while read -r name _ sep path; do
+		if [[ $sep == '=>' && $name == "$lib" ]]; then
+			dirname "$path"
+			return 0
+		fi
+	done < <(ldconfig -p 2>/dev/null)
 
-#define _GNU_SOURCE
-#include <stdio.h>
-#include <dlfcn.h>
-#include <link.h>
+	# 2) LD_LIBRARY_PATH; empty path ':' equals pwd dir (like in dlopen)
+	while IFS= read -r -d : path || [[ -n $path ]]; do
+		path=${path:-.}
+		if [[ -e "$path/$lib" ]]; then
+			echo "$path"
+			return 0
+		fi
+	done <<< "${LD_LIBRARY_PATH:-}:/usr/lib:/usr/lib/x86_64-linux-gnu:/usr/lib64:/lib64:/lib:/lib/x86_64-linux-gnu"
 
-int main(int argc, char *argv[]) {
-	struct link_map *m = NULL;
-	void *h = dlopen(argv[1], RTLD_NOW);
-	if ( h && dlinfo(h, RTLD_DI_LINKMAP, &m) != -1)
-		fprintf(stdout, "%s\n", m->l_name);
-	else
-		fprintf(stderr, "%s\n", dlerror());
-	return 0;
-}'
-	fi
-	dirname $("$get_ld_p" "$1")
+	echo "find_ld_dir: cannot open shared object file '$lib'" >&2
+	return 1
 }
 
 # Update the provided environment dictionary with Sarek Profiles tweaks
@@ -266,11 +266,11 @@ borion_init() {
 			mv AppData "$m_user_app" && mkdir "$m_user_app/Saves"
 		fi
 		ln -s "$m_user_app" AppData && mkdir 'Local Settings'
-		ln -s "$m_user_app/Saves" 'Saved Games'
-		ln -s '../AppData/Local' 'Local Settings/Application Data'
-		ln -s '../Saved Games' 'Documents/My Games'
-		ln -s './AppData/Roaming' 'Application Data'
-		ln -s './Documents' 'My Documents'
+			ln -s "$m_user_app/Saves" 'Saved Games'
+			ln -s '../AppData/Local' 'Local Settings/Application Data'
+			ln -s '../Saved Games' 'Documents/My Games'
+			ln -s './AppData/Roaming' 'Application Data'
+			ln -s './Documents' 'My Documents'
 	)
 	if [ ! -v NVIDIA_WINE_DLL_DIR ]; then
 		export NVIDIA_WINE_DLL_DIR="$(find_ld_dir 'libGLX.so.0')/nvidia/wine"
