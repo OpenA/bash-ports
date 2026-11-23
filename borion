@@ -39,8 +39,8 @@ fi
 m_dlls=''; m_wine_run=("$PROTON_BIN_DIR/wine")
 m_args=(); m_wd3d_dll=(d3d8 d3d9 d3d10core dxgi d3d11 d3d12)
 
-m_wlvl=1; m_dxvk=0; m_ureg=0; m_vscr=''; m_dbug=''; m_arch=0;
-m_nvk1=b; m_ghud=0; m_upfx=0; m_sync=''; m_lang='';
+m_wlvl=1; m_dxvk=0; m_ureg=0; m_vscr= ; m_dbug= ; m_ghud= ;
+m_nvk1=b; m_arch=0; m_upfx=0; m_sync= ; m_lang= ;
 
 parse_opt() {
 	case $1 in
@@ -74,7 +74,7 @@ parse_opt() {
 	--bepinex | -B) m_dlls+='winhttp.dll=n,b;' ;;
 	--upgrade | -U) m_upfx=1 ;;
 	--rereg   | -R) m_ureg=1 ;;
-	--hud     | -H) m_ghud=1 ;;
+	--hud     | -H) m_ghud=mangohud ;;
 	--quet    | -Q) m_wlvl=0 ;;
 	--info    | -I) m_wlvl=2;
 		if [ $2 =~ ^[-+,a-z]+$ ]; then
@@ -295,13 +295,15 @@ borion_start() {
 			do m_dlls+="$d3d=n;";
 		done
 	fi
-	if [ -v PROTON_SAREK_PROFILE ]; then
-		sarek_ogl_vk_tweaks $PROTON_SAREK_PROFILE
+	if [ -v SAREK_DXVK_TWEAKS ]; then
+		sarek_ogl_vk_tweaks $SAREK_DXVK_TWEAKS
 	fi
-	if [ $m_ghud -eq 1 ]; then
-		if [ $m_dxvk -ne 0 ];
-			then export DXVK_HUD='api,version,fps,memory,frametimes'
-			else export GALLIUM_HUD='VRAM-usage,GPU-load,fps';
+	if [ ! -z $m_ghud ]; then
+		if command -v $m_ghud >/dev/null 2>&1;
+			then m_ghud="MANGOHUD_DLSYM=1 $m_ghud";
+		elif [ $m_dxvk -ne 0 ];
+			then m_ghud='DXVK_HUD=api,version,fps,memory,frametimes';
+			else m_ghud='GALLIUM_HUD=fps';
 		fi
 	fi
 	export WINEDLLOVERRIDES="${m_dlls}vulkan-1=${m_nvk1}"
@@ -317,7 +319,7 @@ borion_start() {
 	export PROTON_PIPEWIRE_ALSA_PLUGIN="$PROTON_LIBS_DIR/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_pipewire.so"
 
 	# >>> start
-	env LD_LIBRARY_PATH="$EXTRA_LD_PATH" "${m_wine_run[@]}" "${m_args[@]}"
+	env LD_LIBRARY_PATH="$EXTRA_LD_PATH" $m_ghud "${m_wine_run[@]}" "${m_args[@]}"
 }
 
 parse_sys_args() {
