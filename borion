@@ -5,7 +5,7 @@ m_glob_var="$m_data_dir/glob_vars.sh"
 m_user_app="$m_data_dir/user-appdata"
 m_user_pfx="$m_data_dir/wine-prefix"
 
-
+#prepare borion env
 if [ -f "$m_glob_var" ]; then
 	  . "$m_glob_var"
 elif [  ! -d "$m_data_dir" ]; then
@@ -15,39 +15,37 @@ fi
 if [ ! -v PROTON_BASE_DIR ]; then
 	read -p "Set the Proton dist path: " PROTON_BASE_DIR
 
-	WINE64_BIN="$PROTON_BASE_DIR/files/bin/wine64"
-	WINEWOW_BIN="$PROTON_BASE_DIR/files/bin-wow64/wine"
+	PROTON_BIN_DIR="$PROTON_BASE_DIR/files/bin"
+	PROTON_FIXES_LIB="$PROTON_BASE_DIR/protonfixes/files/lib"
 	PROTON_LIBS_DIR="$PROTON_BASE_DIR/files/lib"
 	MSCORE_FONTS_DIR="$PROTON_BASE_DIR/files/share/fonts"
 	PROTON_VERSION="$(cut -d ' ' -f2 "$PROTON_BASE_DIR/version")"
-	EXTRA_LD_PATH="$PROTON_LIBS_DIR/x86_64-linux-gnu:$PROTON_BASE_DIR/protonfixes/files/lib/x86_64-linux-gnu"
+	PROTON_WINE_DLLS="$PROTON_LIBS_DIR/vkd3d:$PROTON_LIBS_DIR/wine"
+	EXTRA_LD_PATH="$PROTON_FIXES_LIB/x86_64-linux-gnu:$PROTON_FIXES_LIB/i386-linux-gnu:$PROTON_LIBS_DIR/x86_64-linux-gnu:$PROTON_LIBS_DIR/i386-linux-gnu"
 
-	echo '# These are the Proton files search paths (change it if needed)
-PROTON_VERSION="'$PROTON_VERSION'"
-PROTON_BASE_DIR="'$PROTON_BASE_DIR'"
-PROTON_LIBS_DIR="$PROTON_BASE_DIR/files/lib"
-MSCORE_FONTS_DIR="$PROTON_BASE_DIR/files/share/fonts"
-WINE64_BIN="$PROTON_BASE_DIR/files/bin/wine64"
-WINEWOW_BIN="$PROTON_BASE_DIR/files/bin-wow64/wine"
-EXTRA_LD_PATH="$PROTON_LIBS_DIR/x86_64-linux-gnu:$PROTON_BASE_DIR/protonfixes/files/lib/x86_64-linux-gnu"
-#PROTON_SAREK_PROFILE='default'
-# you can add here 'export' variables for wine and libs
-' > "$m_glob_var"
+	echo '# These are the Proton files search paths (change it if needed)' > "$m_glob_var"
+	echo "PROTON_VERSION='$PROTON_VERSION'" >> "$m_glob_var"
+	echo "PROTON_BASE_DIR='$PROTON_BASE_DIR'" >> "$m_glob_var"
+	echo 'PROTON_BIN_DIR="$PROTON_BASE_DIR/files/bin"' >> "$m_glob_var"
+	echo 'PROTON_LIBS_DIR="$PROTON_BASE_DIR/files/lib"' >> "$m_glob_var"
+	echo 'MSCORE_FONTS_DIR="$PROTON_BASE_DIR/files/share/fonts"' >> "$m_glob_var"
+	echo 'PROTON_FIXES_LIB="$PROTON_BASE_DIR/protonfixes/files/lib"' >> "$m_glob_var"
+	echo 'PROTON_WINE_DLLS="$PROTON_LIBS_DIR/vkd3d:$PROTON_LIBS_DIR/wine"' >> "$m_glob_var"
+	echo 'EXTRA_LD_PATH="$PROTON_FIXES_LIB/x86_64-linux-gnu:$PROTON_FIXES_LIB/i386-linux-gnu:$PROTON_LIBS_DIR/x86_64-linux-gnu:$PROTON_LIBS_DIR/i386-linux-gnu"' >> "$m_glob_var"
+	echo '#SAREK_DXVK_TWEAKS="default"' >> "$m_glob_var"
+	echo '# you can add here export variables for wine and libs' >> "$m_glob_var"
 fi
 
-m_dlls=''; m_wine_run=("$WINE64_BIN")
+m_dlls=''; m_wine_run=("$PROTON_BIN_DIR/wine")
 m_args=(); m_wd3d_dll=(d3d8 d3d9 d3d10core dxgi d3d11 d3d12)
 
-m_wlvl=1; m_dxvk=0; m_ureg=0; m_vscr=
-m_nvk1=b; m_ghud=0; m_upfx=0; m_sync=
+m_wlvl=1; m_dxvk=0; m_ureg=0; m_vscr=''; m_dbug=''; m_arch=0;
+m_nvk1=b; m_ghud=0; m_upfx=0; m_sync=''; m_lang='';
 
 parse_opt() {
-	local arg="${1%=*}" # --{argument}=*
-	local val="${1#*=}" # --*={value}
-	if [ $val = $arg ]; then val=; fi
-	case $arg in
+	case $1 in
 	--help | -h)
-		echo "  Example: borion -QWK Game.exe"
+		echo "  Example: borion -QWK -Ljp Game.exe"
 		echo ""
 		echo "  -h, --help       show this help"
 		echo "  -v, --version    show proton version"
@@ -55,47 +53,44 @@ parse_opt() {
 		echo "  -S, --sync[=]    enable proton sync modes (def: nt,es,fs)"
 		echo "  -K, --dxvk[=]    enable dxvk (def: 11)"
 		echo "  -U, --upgrade    upgrade wine prefix"
-		echo "  -R, --regupd     update user register keys"
+		echo "  -R, --rereg      update user register keys"
 		echo "  -H, --hud        enable Hud"
 		echo "  -Q, --quet       no info in console"
-		echo "  -L, --log[=]     full log in console (val: debug+opts)"
-		echo "  -W, --wow64      use wine-wow64 for legacy 32bit apps"
-		echo ""
-		echo "  -B, -be          enable BepInEx Unity runtime"
-		echo "  -G, -gl          force using opengl"
-		echo "  -V, -vk          force native vulkan"
-		echo "  -J, -jp          force japanese locale"
-		echo "  -E, -en          force english locale"
+		echo "  -I, --info[=]    print info in console (val: debug+opts)"
+		echo "  -W, --warch[=]   sets 32/64 win arch (def: wow64 for legacy 32bit apps)"
+		echo "  -B, --bepinex    enable BepInEx Unity runtime"
+		echo "  -F, --force[=]   force using vk/gl or you own dll overrides"
+		echo "  -L, --lang[=]    force switch jp/en or you own locale"
 		exit
 		;;
 	--version | -v)
-		echo "${PROTON_VERSION% *} (Borion~0.1)"
+		echo "Borion~0.2 ($PROTON_VERSION)"
 		exit
 		;;
-	--desktop | -D) if [[ $val =~ ^[0-9]+x[0-9]+$ ]]; then m_vscr=$val; else m_vscr='1920x1080'; fi ;;
-	--dxvk    | -K) if [[ $val =~ ^[0-9]+$        ]]; then m_dxvk=$val; else m_dxvk='11'; fi ;;
-	--sync    | -S) if [[ $val =~ ^[,a-z]+$       ]]; then m_sync=$val; else m_sync='nt,fs,es'; fi ;;
-	--wow64   | -W) m_wine_run=("$WINEWOW_BIN") ;;
+	--desktop | -D) [[ $2 =~ ^[0-9]+x[0-9]+$ ]] && m_vscr=$2 || m_vscr=1920x1080 ;;
+	--dxvk    | -K) [[ $2 =~ ^[0-9]+$        ]] && m_dxvk=$2 || m_dxvk=11 ;;
+	--sync    | -S) [[ $2 =~ ^[,a-z]+$       ]] && m_sync=$2 || m_sync=nt,fs,es ;;
+	--warch   | -W) [[ $2 =~ ^[0-9]+$        ]] && m_arch=$2 || m_arch=1 ;;
+	--bepinex | -B) m_dlls+='winhttp.dll=n,b;' ;;
 	--upgrade | -U) m_upfx=1 ;;
-	--regupd  | -R) m_ureg=1 ;;
+	--rereg   | -R) m_ureg=1 ;;
 	--hud     | -H) m_ghud=1 ;;
 	--quet    | -Q) m_wlvl=0 ;;
-	--log     | -L) m_wlvl=2
-		if [ -z $val ]; then
-			val='+timestamp,+pid,+tid,+seh,+unwind,+threadname,+debugstr,+loaddll,+mscoree'
+	--info    | -I) m_wlvl=2;
+		if [ $2 =~ ^[-+,a-z]+$ ]; then
+			m_dbug="$2"
+		else
+			m_dbug='+timestamp,+pid,+tid,+seh,+unwind,+threadname,+debugstr,+loaddll,+mscoree'
 		fi
-		export WINEDEBUG="$val"
 		;;
-	-be | -B) m_dlls+='winhttp.dll=n,b;' ;;
-	-vk | -V) m_nvk1=n,b ;;
-	-gl | -G) m_nvk1=d ;;
-	-en | -E)
-		export LANG='en_US.UTF-8'
-		export LC_ALL='C.UTF-8'
+	--force | -F)
+		[[ $2 = 'vk' ]] && m_nvk1=n,b ||
+		[[ $2 = 'gl' ]] && m_nvk1=d   ||
+		[[ $2 =~ ^[.a-z=,\;]+$ ]] && m_dlls+="$2"
 		;;
-	-jp | -J)
-		export LANG='ja_JP.UTF-8'
-		export LC_ALL='ja_JP.UTF-8'
+	--lang | -L)
+		[[ $2 = 'en' ]] && m_lang=en_US.UTF-8 ||
+		[[ $2 = 'jp' ]] && m_lang=ja_JP.UTF-8 || m_lang="$2"
 		;;
 	esac
 }
@@ -111,7 +106,7 @@ function find_ld_dir {
 	local get_ld_p="$m_data_dir/get-ld-path"
 
 	if [ ! -f "$get_ld_p" ]; then
-		cc -o "$get_ld_p" -x c -O1 - <<< '
+		cc -o "$get_ld_p" -x c -ldl - <<< '
 
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -217,7 +212,7 @@ function copy_proton_dlls {
 }
 
 function create_wine_pfx {
-	env "$m_wine_run" wineboot $@
+	env LD_LIBRARY_PATH="$EXTRA_LD_PATH" "$m_wine_run" wineboot $@ &&
 	(
 		cd "$m_user_pfx/drive_c/windows"
 		# import mscore fonts
@@ -234,6 +229,9 @@ function create_wine_pfx {
 			copy_proton_dlls syswow64 i386   #!!! copy lib32 in to wow64 !!!
 			copy_proton_dlls system32 x86_64 #!!! copy lib64 in to sys32 !!!
 		fi
+	) || (
+		echo -e "\e[30;41mFailed to create prefix\e[0m" >&2
+		exit 1
 	)
 }
 
@@ -258,7 +256,7 @@ function update_extra_reg {
 }
 
 borion_init() {
-	create_wine_pfx && update_extra_reg
+	create_wine_pfx && update_extra_reg &&
 	(
 		# create Proton AppData symlinks
 		cd "$m_user_pfx/drive_c/users/steamuser"
@@ -314,28 +312,48 @@ borion_start() {
 
 	export GST_GL_WINDOW="$XDG_SESSION_TYPE"
 	export WINE_GST_REGISTRY_DIR="$m_data_dir/gstreamer-1.0"
+	export ESPEAK_DATA_PATH="$PROTON_BASE_DIR/files/share"
+	export XLOCALEDIR="$ESPEAK_DATA_PATH/X11/locale"
+	export PROTON_PIPEWIRE_ALSA_PLUGIN="$PROTON_LIBS_DIR/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_pipewire.so"
 
 	# >>> start
 	env LD_LIBRARY_PATH="$EXTRA_LD_PATH" "${m_wine_run[@]}" "${m_args[@]}"
 }
 
-# parse sys args
-for arg in "$@"; do
-	if [[ $arg =~ ^\-[A-Z]+$ ]]; then
-		for ((i=1; i < ${#arg}; i++)); do
-			parse_opt "-${arg:i:1}"
-		done
-	elif [[ $arg =~ ^\-[-a-z0-9]+ ]]; then
-		parse_opt "$arg"
-	else
-		m_args+=("$arg")
-	fi
-done
+parse_sys_args() {
+	local a o v i
+	for a in "$@"; do
+		if [[ $a =~ ^\-[A-Z]+$ ]]; then
+			for ((i=1; i < ${#a}; i++)); do
+				parse_opt "-${a:i:1}"
+			done
+		elif [[ $a =~ ^\-[A-Z].+$ ]]; then
+			parse_opt "${a:0:2}" "${a:2}"
+		elif [[ $a =~ ^\-\-[a-z]+.+$ ]]; then
+			o="${a%=*}" # --{option}=*
+			v="${a:${#o}+1}" # --*={value}
+			parse_opt "$o" "$v"
+		else
+			m_args+=("$a")
+		fi
+	done
+}
 
 # check if wine exist
 if [ ! -f "$m_wine_run" ]; then
 	echo "Not a wine path: $m_wine_run";
 	exit
+else
+	parse_sys_args "$@"
+fi
+
+if [ $m_arch -eq 1 ]; then
+	if [ -e "$PROTON_BIN_DIR-wow64/wine" ]; then
+		m_wine_run=("$PROTON_BIN_DIR-wow64/wine")
+	fi
+	export WINEARCH="wow64";
+elif [[ $m_arch -eq 32 || $m_arch -eq 64 ]]; then
+	export WINEARCH="win$m_arch";
 fi
 
   if [ $m_wlvl -eq 0 ]; then
@@ -349,6 +367,7 @@ elif [ $m_wlvl -eq 1 ]; then
 	export VKD3D_DEBUG='fixme'
 	export VKD3D_SHADER_DEBUG='fixme'
 elif [ $m_wlvl -eq 2 ]; then
+	export WINEDEBUG="$m_dbug"
 	export WINE_MONO_TRACE='E:System.NotImplementedException'
 	export DXVK_LOG_LEVEL='debug'
 	export DXVK_NVAPI_LOG_LEVEL='debug'
@@ -358,8 +377,9 @@ fi
 
 if [ ! -z "$m_user_pfx" ]; then
 	export WINEPREFIX="$m_user_pfx"
-	if [ ! -d "$m_user_pfx" ]; then
-		mkdir "$m_user_pfx"
+	export WINEDLLPATH="$PROTON_WINE_DLLS"
+	if [ ! -d "$m_user_pfx/drive_c/windows" ]; then
+		mkdir -p "$m_user_pfx"
 		if [ $m_wlvl -ne 0 ]; then
 			echo -e "\033[30;43mCreate new prefix\033[0m\n  $m_user_pfx";
 		fi
@@ -376,6 +396,11 @@ elif [ -d "$m_args" ]; then
 	m_wine_run+=('explorer')
 elif [[ -f "$m_args" && "$m_args" = *.exe ]]; then 
 	m_wine_run+=('start' '/unix')
+fi
+
+if [ ! -z $m_lang ]; then
+	export LANG="$m_lang"
+	export LC_ALL="$m_lang"
 fi
 
 if [ $m_wlvl -ne 0 ]; then
